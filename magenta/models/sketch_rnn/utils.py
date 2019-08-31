@@ -1,22 +1,25 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """SketchRNN data loading and image manipulation utilities."""
 
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
+
 import random
+
 import numpy as np
 
 
@@ -54,8 +57,20 @@ def lerp(p0, p1, t):
   return (1.0 - t) * p0 + t * p1
 
 
+# A note on formats:
+# Sketches are encoded as a sequence of strokes. stroke-3 and stroke-5 are
+# different stroke encodings.
+#   stroke-3 uses 3-tuples, consisting of x-offset, y-offset, and a binary
+#       variable which is 1 if the pen is lifted between this position and
+#       the next, and 0 otherwise.
+#   stroke-5 consists of x-offset, y-offset, and p_1, p_2, p_3, a binary
+#   one-hot vector of 3 possible pen states: pen down, pen up, end of sketch.
+#   See section 3.1 of https://arxiv.org/abs/1704.03477 for more detail.
+# Sketch-RNN takes input in stroke-5 format, with sketches padded to a common
+# maximum length and prefixed by the special start token [0, 0, 1, 0, 0]
+# The QuickDraw dataset is stored using stroke-3.
 def strokes_to_lines(strokes):
-  """Convert 3-stroke format to polyline format."""
+  """Convert stroke-3 format to polyline format."""
   x = 0
   y = 0
   lines = []
@@ -75,7 +90,7 @@ def strokes_to_lines(strokes):
 
 
 def lines_to_strokes(lines):
-  """Convert polyline format to 3-stroke format."""
+  """Convert polyline format to stroke-3 format."""
   eos = 0
   strokes = [[0, 0, 0]]
   for line in lines:
@@ -161,7 +176,9 @@ def clean_strokes(sample_strokes, factor=100):
 
 
 def to_big_strokes(stroke, max_len=250):
-  """Make this the special bigger format as described in sketch-rnn paper."""
+  """Converts from stroke-3 to stroke-5 format and pads to given length."""
+  # (But does not insert special start token).
+
   result = np.zeros((max_len, 5), dtype=float)
   l = len(stroke)
   assert l <= max_len
@@ -195,11 +212,15 @@ class DataLoader(object):
                limit=1000):
     self.batch_size = batch_size  # minibatch size
     self.max_seq_length = max_seq_length  # N_max in sketch-rnn paper
-    self.scale_factor = scale_factor  # divide data by this factor
+    self.scale_factor = scale_factor  # divide offsets by this factor
     self.random_scale_factor = random_scale_factor  # data augmentation method
-    self.limit = limit  # removes large gaps in the data
+    # Removes large gaps in the data. x and y offsets are clamped to have
+    # absolute value no greater than this limit.
+    self.limit = limit
     self.augment_stroke_prob = augment_stroke_prob  # data augmentation method
     self.start_stroke_token = [0, 0, 1, 0, 0]  # S_0 in sketch-rnn paper
+    # sets self.strokes (list of ndarrays, one per sketch, in stroke-3 format,
+    # sorted by size)
     self.preprocess(strokes)
 
   def preprocess(self, strokes):
@@ -219,7 +240,7 @@ class DataLoader(object):
         data[:, 0:2] /= self.scale_factor
         raw_data.append(data)
         seq_len.append(len(data))
-    seq_len = np.array(seq_len)
+    seq_len = np.array(seq_len)  # nstrokes for each sketch
     idx = np.argsort(seq_len)
     self.strokes = []
     for i in range(len(seq_len)):
@@ -247,7 +268,7 @@ class DataLoader(object):
     """Calculate the normalizing factor explained in appendix of sketch-rnn."""
     data = []
     for i in range(len(self.strokes)):
-      if len(self.strokes[i]) > (self.max_seq_length):
+      if len(self.strokes[i]) > self.max_seq_length:
         continue
       for j in range(len(self.strokes[i])):
         data.append(self.strokes[i][j, 0])

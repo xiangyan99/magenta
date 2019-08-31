@@ -1,16 +1,17 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Abstract base classes for working with musical event sequences.
 
 The abstract `EventSequence` class is an interface for a sequence of musical
@@ -21,16 +22,14 @@ interface.
 import abc
 import copy
 
-# internal imports
 from magenta.music import constants
-
 
 DEFAULT_STEPS_PER_BAR = constants.DEFAULT_STEPS_PER_BAR
 DEFAULT_STEPS_PER_QUARTER = constants.DEFAULT_STEPS_PER_QUARTER
 STANDARD_PPQ = constants.STANDARD_PPQ
 
 
-class NonIntegerStepsPerBarException(Exception):
+class NonIntegerStepsPerBarError(Exception):
   pass
 
 
@@ -49,12 +48,10 @@ class EventSequence(object):
 
   Attributes:
     start_step: The offset of the first step of the sequence relative to the
-        beginning of the source sequence. Should always be the first step of a
-        bar.
+        beginning of the source sequence.
     end_step: The offset to the beginning of the bar following the last step
-        of the sequence relative to the beginning of the source sequence. Will
-        always be the first step of a bar.
-    steps_per_quarter: Number of steps in in a quarter note.
+        of the sequence relative to the beginning of the source sequence.
+    steps: A Python list containing the time step at each event of the sequence.
   """
   __metaclass__ = abc.ABCMeta
 
@@ -67,7 +64,7 @@ class EventSequence(object):
     pass
 
   @abc.abstractproperty
-  def steps_per_quarter(self):
+  def steps(self):
     pass
 
   @abc.abstractmethod
@@ -187,18 +184,17 @@ class SimpleEventSequence(EventSequence):
     """
     return iter(self._events)
 
-  def __getitem__(self, i):
-    """Returns the event at the given index."""
-    return self._events[i]
-
-  def __getslice__(self, i, j):
-    """Returns this sequence restricted to events in the given slice range."""
-    i = min(max(i, 0), len(self))
-    return type(self)(pad_event=self._pad_event,
-                      events=self._events[i:j],
-                      start_step=self.start_step + i,
-                      steps_per_bar=self.steps_per_bar,
-                      steps_per_quarter=self.steps_per_quarter)
+  def __getitem__(self, key):
+    """Returns the slice or individual item."""
+    if isinstance(key, int):
+      return self._events[key]
+    elif isinstance(key, slice):
+      events = self._events.__getitem__(key)
+      return type(self)(pad_event=self._pad_event,
+                        events=events,
+                        start_step=self.start_step + (key.start or 0),
+                        steps_per_bar=self.steps_per_bar,
+                        steps_per_quarter=self.steps_per_quarter)
 
   def __len__(self):
     """How many events are in this SimpleEventSequence.
@@ -231,6 +227,10 @@ class SimpleEventSequence(EventSequence):
   @property
   def end_step(self):
     return self._end_step
+
+  @property
+  def steps(self):
+    return list(range(self._start_step, self._end_step))
 
   @property
   def steps_per_bar(self):

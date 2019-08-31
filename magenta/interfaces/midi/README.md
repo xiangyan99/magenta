@@ -12,6 +12,12 @@ Note that you can only interface with a trained models that have a
   <img src="midi.png" alt="Sequence Diagram for the MIDI interface"/>
 </p>
 
+## Example Demo
+
+The simplest way to try this interface is using the
+[AI Jam demo](https://github.com/tensorflow/magenta-demos/tree/master/ai-jam-js). The instructions below provide a more basic
+customizable interaction that is more difficult to set up.
+
 ## Installing Dependencies
 
 Before using the interface, you will need to install some
@@ -27,28 +33,6 @@ conda environment is active:
 
 ```bash
 source activate magenta
-```
-
-### Install RtMidi
-
-The interface uses a python library called [mido](http://mido.readthedocs.io) to
-interface your computer's MIDI hub. For it to work, you need to separately
-install a backend library it can use to connect to your system. Below are
-instructions for installing RtMidi. Note that if you used our
-[installer script](/README.md#automated-install), RtMidi will already be
-installed.
-
-**Ubuntu:**
-
-```bash
-sudo apt-get install build-essential libasound2-dev libjack-dev
-pip install --pre python-rtmidi
-```
-
-**Mac:**
-
-```bash
-pip install --pre python-rtmidi
 ```
 
 ### Install QjackCtl (Ubuntu Only)
@@ -162,8 +146,8 @@ You may now start the interface with this command:
 
 ```bash
 magenta_midi \
-  --input_port=${CONTROLLER_PORT} \
-  --output_port=${SYNTH_PORT} \
+  --input_ports=${CONTROLLER_PORT} \
+  --output_ports=${SYNTH_PORT} \
   --bundle_files=${BUNDLE_PATHS}
 ```
 
@@ -212,7 +196,7 @@ and are using VPMK and FluidSynth, your command might look like this:
 
 ```bash
 magenta_midi \
-  --input_port="VMPK Output" \
-  --output_port="FluidSynth virtual port" \
+  --input_ports="VMPK Output" \
+  --output_ports="FluidSynth virtual port" \
   --bundle_files=/tmp/attention_rnn.mag
 ```

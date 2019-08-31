@@ -1,20 +1,27 @@
+# Copyright 2019 The Magenta Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """A module for implementing interaction between MIDI and SequenceGenerators."""
 
 import abc
 import threading
 import time
 
-# internal imports
-import tensorflow as tf
-
 import magenta
 from magenta.protobuf import generator_pb2
 from magenta.protobuf import music_pb2
-
-
-class MidiInteractionException(Exception):
-  """Base class for exceptions in this module."""
-  pass
+import tensorflow as tf
 
 
 def adjust_sequence_times(sequence, delta_time):
@@ -173,7 +180,8 @@ class CallAndResponseMidiInteraction(MidiInteraction):
         input.
     allow_overlap: A boolean specifying whether to allow the call to overlap
         with the response.
-    enable_metronome: A boolean specifying whether to enable the metronome.
+    metronome_channel: The optional 0-based MIDI channel to output metronome on.
+        Ignored if `clock_signal` is provided.
     min_listen_ticks_control_number: The optional control change number to use
         for controlling the minimum call phrase length in clock ticks.
     max_listen_ticks_control_number: The optional control change number to use
@@ -223,7 +231,7 @@ class CallAndResponseMidiInteraction(MidiInteraction):
                panic_signal=None,
                mutate_signal=None,
                allow_overlap=False,
-               enable_metronome=False,
+               metronome_channel=None,
                min_listen_ticks_control_number=None,
                max_listen_ticks_control_number=None,
                response_ticks_control_number=None,
@@ -243,7 +251,7 @@ class CallAndResponseMidiInteraction(MidiInteraction):
     self._panic_signal = panic_signal
     self._mutate_signal = mutate_signal
     self._allow_overlap = allow_overlap
-    self._enable_metronome = enable_metronome
+    self._metronome_channel = metronome_channel
     self._min_listen_ticks_control_number = min_listen_ticks_control_number
     self._max_listen_ticks_control_number = max_listen_ticks_control_number
     self._response_ticks_control_number = response_ticks_control_number
@@ -345,8 +353,9 @@ class CallAndResponseMidiInteraction(MidiInteraction):
     start_time = time.time()
     self._captor = self._midi_hub.start_capture(self._qpm, start_time)
 
-    if not self._clock_signal and self._enable_metronome:
-      self._midi_hub.start_metronome(self._qpm, start_time)
+    if not self._clock_signal and self._metronome_channel is not None:
+      self._midi_hub.start_metronome(
+          self._qpm, start_time, channel=self._metronome_channel)
 
     # Set callback for end call signal.
     if self._end_call_signal is not None:
@@ -385,13 +394,16 @@ class CallAndResponseMidiInteraction(MidiInteraction):
       tick_time = captured_sequence.total_time
 
       # Set to current QPM, since it might have changed.
-      if self._enable_metronome:
-        self._midi_hub.start_metronome(self._qpm, tick_time)
+      if not self._clock_signal and self._metronome_channel is not None:
+        self._midi_hub.start_metronome(
+            self._qpm, tick_time, channel=self._metronome_channel)
       captured_sequence.tempos[0].qpm = self._qpm
 
       tick_duration = tick_time - last_tick_time
-      last_end_time = (max(note.end_time for note in captured_sequence.notes)
-                       if captured_sequence.notes else 0.0)
+      if captured_sequence.notes:
+        last_end_time = max(note.end_time for note in captured_sequence.notes)
+      else:
+        last_end_time = 0.0
 
       # True iff there was no input captured during the last tick.
       silent_tick = last_end_time <= last_tick_time

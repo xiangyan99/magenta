@@ -1,21 +1,20 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Classes for converting between polyphonic input and model input/output."""
 
 from __future__ import division
-
-# internal imports
 
 from magenta.models.polyphony_rnn import polyphony_lib
 from magenta.models.polyphony_rnn.polyphony_lib import PolyphonicEvent
@@ -72,3 +71,9 @@ class PolyphonyOneHotEncoding(encoder_decoder.OneHotEncoding):
           event_type=event_type, pitch=pitch)
 
     raise ValueError('Unknown event index: %s' % index)
+
+  def event_to_num_steps(self, event):
+    if event.event_type == PolyphonicEvent.STEP_END:
+      return 1
+    else:
+      return 0

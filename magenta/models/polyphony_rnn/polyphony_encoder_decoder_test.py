@@ -1,24 +1,22 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Tests for polyphony_encoder_decoder."""
-
-# internal imports
-
-import tensorflow as tf
 
 from magenta.models.polyphony_rnn import polyphony_encoder_decoder
 from magenta.models.polyphony_rnn.polyphony_lib import PolyphonicEvent
+import tensorflow as tf
 
 
 class PolyphonyOneHotEncodingTest(tf.test.TestCase):
@@ -62,6 +60,18 @@ class PolyphonyOneHotEncodingTest(tf.test.TestCase):
     self.assertEqual(258, index)
     event = self.enc.decode_event(index)
     self.assertEqual(continued_max_note, event)
+
+  def testEventToNumSteps(self):
+    self.assertEqual(0, self.enc.event_to_num_steps(
+        PolyphonicEvent(event_type=PolyphonicEvent.START, pitch=0)))
+    self.assertEqual(0, self.enc.event_to_num_steps(
+        PolyphonicEvent(event_type=PolyphonicEvent.END, pitch=0)))
+    self.assertEqual(1, self.enc.event_to_num_steps(
+        PolyphonicEvent(event_type=PolyphonicEvent.STEP_END, pitch=0)))
+    self.assertEqual(0, self.enc.event_to_num_steps(
+        PolyphonicEvent(event_type=PolyphonicEvent.NEW_NOTE, pitch=60)))
+    self.assertEqual(0, self.enc.event_to_num_steps(
+        PolyphonicEvent(event_type=PolyphonicEvent.CONTINUED_NOTE, pitch=72)))
 
 
 if __name__ == '__main__':

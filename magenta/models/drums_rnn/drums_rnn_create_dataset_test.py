@@ -1,28 +1,26 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Tests for drums_rnn_create_dataset."""
 
-# internal imports
-import tensorflow as tf
 import magenta
-
-from magenta.models.drums_rnn import drums_rnn_create_dataset
+from magenta.models.drums_rnn import drums_rnn_pipeline
 from magenta.models.shared import events_rnn_model
 from magenta.pipelines import drum_pipelines
-from magenta.pipelines import pipelines_common
+from magenta.pipelines import note_sequence_pipelines
 from magenta.protobuf import music_pb2
-
+import tensorflow as tf
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -34,7 +32,7 @@ class DrumsRNNPipelineTest(tf.test.TestCase):
         None,
         magenta.music.OneHotEventSequenceEncoderDecoder(
             magenta.music.MultiDrumOneHotEncoding()),
-        magenta.common.HParams())
+        tf.contrib.training.HParams())
 
   def testDrumsRNNPipeline(self):
     note_sequence = magenta.common.testing_lib.parse_test_proto(
@@ -53,7 +51,7 @@ class DrumsRNNPipelineTest(tf.test.TestCase):
          (55, 100, 14.1, 15.0), (54, 90, 15.6, 17.0), (60, 100, 17.1, 18.0)],
         is_drum=True)
 
-    quantizer = pipelines_common.Quantizer(steps_per_quarter=4)
+    quantizer = note_sequence_pipelines.Quantizer(steps_per_quarter=4)
     drums_extractor = drum_pipelines.DrumsExtractor(min_bars=7, gap_bars=1.0)
     one_hot_encoding = magenta.music.OneHotEventSequenceEncoderDecoder(
         magenta.music.MultiDrumOneHotEncoding())
@@ -63,8 +61,8 @@ class DrumsRNNPipelineTest(tf.test.TestCase):
     expected_result = {'training_drum_tracks': [one_hot],
                        'eval_drum_tracks': []}
 
-    pipeline_inst = drums_rnn_create_dataset.get_pipeline(self.config,
-                                                          eval_ratio=0.0)
+    pipeline_inst = drums_rnn_pipeline.get_pipeline(
+        self.config, eval_ratio=0.0)
     result = pipeline_inst.transform(note_sequence)
     self.assertEqual(expected_result, result)
 

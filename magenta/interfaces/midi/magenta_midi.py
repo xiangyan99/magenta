@@ -1,36 +1,41 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """A MIDI interface to the sequence generators.
 
 Captures monophonic input MIDI sequences and plays back responses from the
 sequence generator.
 """
-from functools import partial
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import functools
 import re
 import threading
 import time
 
-# internal imports
-import tensorflow as tf
 import magenta
-
 from magenta.interfaces.midi import midi_hub
 from magenta.interfaces.midi import midi_interaction
 from magenta.models.drums_rnn import drums_rnn_sequence_generator
 from magenta.models.melody_rnn import melody_rnn_sequence_generator
+from magenta.models.performance_rnn import performance_sequence_generator
 from magenta.models.pianoroll_rnn_nade import pianoroll_rnn_nade_sequence_generator
 from magenta.models.polyphony_rnn import polyphony_sequence_generator
+from six.moves import input  # pylint: disable=redefined-builtin
+import tensorflow as tf
 
 FLAGS = tf.app.flags.FLAGS
 
@@ -39,13 +44,13 @@ tf.app.flags.DEFINE_bool(
     False,
     'Only list available MIDI ports.')
 tf.app.flags.DEFINE_string(
-    'input_port',
+    'input_ports',
     'magenta_in',
-    'The name of the input MIDI port.')
+    'Comma-separated list of names of the input MIDI ports.')
 tf.app.flags.DEFINE_string(
-    'output_port',
+    'output_ports',
     'magenta_out',
-    'The name of the output MIDI port.')
+    'Comma-separated list of names of the output MIDI ports.')
 tf.app.flags.DEFINE_bool(
     'passthrough',
     True,
@@ -103,7 +108,13 @@ tf.app.flags.DEFINE_boolean(
 tf.app.flags.DEFINE_boolean(
     'enable_metronome',
     True,
-    'Whether to enable the metronome.')
+    'Whether to enable the metronome. Ignored if `clock_control_number` is '
+    'provided.')
+tf.app.flags.DEFINE_integer(
+    'metronome_channel',
+    1,
+    'The 0-based MIDI channel to output the metronome on. Ignored if '
+    '`enable_metronome` is False or `clock_control_number` is provided.')
 tf.app.flags.DEFINE_integer(
     'qpm',
     120,
@@ -168,6 +179,7 @@ _CONTROL_FLAGS = [
 # A map from a string generator name to its class.
 _GENERATOR_MAP = melody_rnn_sequence_generator.get_generator_map()
 _GENERATOR_MAP.update(drums_rnn_sequence_generator.get_generator_map())
+_GENERATOR_MAP.update(performance_sequence_generator.get_generator_map())
 _GENERATOR_MAP.update(pianoroll_rnn_nade_sequence_generator.get_generator_map())
 _GENERATOR_MAP.update(polyphony_sequence_generator.get_generator_map())
 
@@ -189,13 +201,13 @@ class CCMapper(object):
 
   def _print_instructions(self):
     """Prints instructions for mapping control changes."""
-    print ('Enter the index of a signal to set the control change for, or `q` '
-           'when done.')
+    print('Enter the index of a signal to set the control change for, or `q` '
+          'when done.')
     fmt = '{:>6}\t{:<20}\t{:>6}'
-    print fmt.format('Index', 'Control', 'Current')
+    print(fmt.format('Index', 'Control', 'Current'))
     for i, signal in enumerate(self._signals):
-      print fmt.format(i + 1, signal, self._cc_map.get(signal))
-    print
+      print(fmt.format(i + 1, signal, self._cc_map.get(signal)))
+    print('')
 
   def _update_signal(self, signal, msg):
     """Updates mapping for the signal to the message's control change.
@@ -205,28 +217,28 @@ class CCMapper(object):
       msg: The mido.Message whose control change the signal should be set to.
     """
     if msg.control in self._cc_map.values():
-      print 'Control number %d is already assigned. Ignoring.' % msg.control
+      print('Control number %d is already assigned. Ignoring.' % msg.control)
     else:
       self._cc_map[signal] = msg.control
-      print 'Assigned control number %d to `%s`.' % (msg.control, signal)
+      print('Assigned control number %d to `%s`.' % (msg.control, signal))
     self._update_event.set()
 
   def update_map(self):
     """Enters a loop that receives user input to set signal controls."""
     while True:
-      print
+      print('')
       self._print_instructions()
-      response = raw_input('Selection: ')
+      response = input('Selection: ')
       if response == 'q':
         return
       try:
         signal = self._signals[int(response) - 1]
       except (ValueError, IndexError):
-        print 'Invalid response:', response
+        print('Invalid response:', response)
         continue
       self._update_event.clear()
       self._midi_hub.register_callback(
-          partial(self._update_signal, signal),
+          functools.partial(self._update_signal, signal),
           midi_hub.MidiSignal(type='control_change'))
       print('Send a control signal using the control number you wish to '
             'associate with `%s`.' % signal)
@@ -236,23 +248,23 @@ class CCMapper(object):
 def _validate_flags():
   """Returns True if flag values are valid or prints error and returns False."""
   if FLAGS.list_ports:
-    print "Input ports: '%s'" % (
-        "', '".join(midi_hub.get_available_input_ports()))
-    print "Ouput ports: '%s'" % (
-        "', '".join(midi_hub.get_available_output_ports()))
+    print("Input ports: '%s'" % (
+        "', '".join(midi_hub.get_available_input_ports())))
+    print("Ouput ports: '%s'" % (
+        "', '".join(midi_hub.get_available_output_ports())))
     return False
 
   if FLAGS.bundle_files is None:
-    print '--bundle_files must be specified.'
+    print('--bundle_files must be specified.')
     return False
 
   if (len(FLAGS.bundle_files.split(',')) > 1 and
       FLAGS.generator_select_control_number is None):
     tf.logging.warning(
-      'You have specified multiple bundle files (generators), without setting '
-      '`--generator_select_control_number`. You will only be able to use the '
-      'first generator (%s).',
-      FLAGS.bundle_files[0])
+        'You have specified multiple bundle files (generators), without '
+        'setting `--generator_select_control_number`. You will only be able to '
+        'use the first generator (%s).',
+        FLAGS.bundle_files[0])
 
   return True
 
@@ -262,39 +274,39 @@ def _load_generator_from_bundle_file(bundle_file):
   try:
     bundle = magenta.music.sequence_generator_bundle.read_bundle_file(
         bundle_file)
-  except magenta.music.sequence_generator_bundle.GeneratorBundleParseException:
-    print 'Failed to parse bundle file: %s' % FLAGS.bundle_file
+  except magenta.music.sequence_generator_bundle.GeneratorBundleParseError:
+    print('Failed to parse bundle file: %s' % FLAGS.bundle_file)
     return None
 
   generator_id = bundle.generator_details.id
   if generator_id not in _GENERATOR_MAP:
-    print "Unrecognized SequenceGenerator ID '%s' in bundle file: %s" % (
-        generator_id, FLAGS.bundle_file)
+    print("Unrecognized SequenceGenerator ID '%s' in bundle file: %s" % (
+        generator_id, FLAGS.bundle_file))
     return None
 
   generator = _GENERATOR_MAP[generator_id](checkpoint=None, bundle=bundle)
   generator.initialize()
-  print "Loaded '%s' generator bundle from file '%s'." % (
-      bundle.generator_details.id, bundle_file)
+  print("Loaded '%s' generator bundle from file '%s'." % (
+      bundle.generator_details.id, bundle_file))
   return generator
 
 
 def _print_instructions():
   """Prints instructions for interaction based on the flag values."""
-  print ''
-  print 'Instructions:'
-  print 'Start playing  when you want to begin the call phrase.'
+  print('')
+  print('Instructions:')
+  print('Start playing  when you want to begin the call phrase.')
   if FLAGS.end_call_control_number is not None:
-    print ('When you want to end the call phrase, signal control number %d '
-           'with value 127, or stop playing and wait one clock tick.'
-           % FLAGS.end_call_control_number)
+    print('When you want to end the call phrase, signal control number %d '
+          'with value 127, or stop playing and wait one clock tick.'
+          % FLAGS.end_call_control_number)
   else:
-    print ('When you want to end the call phrase, stop playing and wait one '
-           'clock tick.')
-  print ('Once the response completes, the interface will wait for you to '
-         'begin playing again to start a new call phrase.')
-  print ''
-  print 'To end the interaction, press CTRL-C.'
+    print('When you want to end the call phrase, stop playing and wait one '
+          'clock tick.')
+  print('Once the response completes, the interface will wait for you to '
+        'begin playing again to start a new call phrase.')
+  print('')
+  print('To end the interaction, press CTRL-C.')
 
 
 def main(unused_argv):
@@ -311,12 +323,9 @@ def main(unused_argv):
       return
 
   # Initialize MidiHub.
-  if FLAGS.input_port not in midi_hub.get_available_input_ports():
-    print "Opening '%s' as a virtual MIDI port for input." % FLAGS.input_port
-  if FLAGS.output_port not in midi_hub.get_available_output_ports():
-    print "Opening '%s' as a virtual MIDI port for output." % FLAGS.output_port
-  hub = midi_hub.MidiHub(FLAGS.input_port, FLAGS.output_port,
-                         midi_hub.TextureType.MONOPHONIC,
+  hub = midi_hub.MidiHub(FLAGS.input_ports.split(','),
+                         FLAGS.output_ports.split(','),
+                         midi_hub.TextureType.POLYPHONIC,
                          passthrough=FLAGS.passthrough,
                          playback_channel=FLAGS.playback_channel,
                          playback_offset=FLAGS.playback_offset)
@@ -335,15 +344,17 @@ def main(unused_argv):
         control=control_map['clock'], value=127)
     tick_duration = None
 
-  end_call_signal = (
-      None if control_map['end_call'] is None else
-      midi_hub.MidiSignal(control=control_map['end_call'], value=127))
-  panic_signal = (
-      None if control_map['panic'] is None else
-      midi_hub.MidiSignal(control=control_map['panic'], value=127))
-  mutate_signal = (
-      None if control_map['mutate'] is None else
-      midi_hub.MidiSignal(control=control_map['mutate'], value=127))
+  def _signal_from_control_map(name):
+    if control_map[name] is None:
+      return None
+    return midi_hub.MidiSignal(control=control_map[name], value=127)
+
+  end_call_signal = _signal_from_control_map('end_call')
+  panic_signal = _signal_from_control_map('panic')
+  mutate_signal = _signal_from_control_map('mutate')
+
+  metronome_channel = (
+      FLAGS.metronome_channel if FLAGS.enable_metronome else None)
   interaction = midi_interaction.CallAndResponseMidiInteraction(
       hub,
       generators,
@@ -355,7 +366,7 @@ def main(unused_argv):
       panic_signal=panic_signal,
       mutate_signal=mutate_signal,
       allow_overlap=FLAGS.allow_overlap,
-      enable_metronome=FLAGS.enable_metronome,
+      metronome_channel=metronome_channel,
       min_listen_ticks_control_number=control_map['min_listen_ticks'],
       max_listen_ticks_control_number=control_map['max_listen_ticks'],
       response_ticks_control_number=control_map['response_ticks'],
@@ -373,7 +384,7 @@ def main(unused_argv):
   except KeyboardInterrupt:
     interaction.stop()
 
-  print 'Interaction stopped.'
+  print('Interaction stopped.')
 
 
 def console_entry_point():

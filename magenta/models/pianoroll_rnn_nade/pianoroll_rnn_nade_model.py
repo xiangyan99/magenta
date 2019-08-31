@@ -1,31 +1,32 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""RNN-NADE model."""
 
-# internal imports
+"""RNN-NADE model."""
 
 import magenta
 from magenta.models.pianoroll_rnn_nade import pianoroll_rnn_nade_graph
 from magenta.models.shared import events_rnn_model
 import magenta.music as mm
+import tensorflow as tf
 
 
 class PianorollRnnNadeModel(events_rnn_model.EventSequenceRnnModel):
   """Class for RNN-NADE sequence generation models."""
 
   def _build_graph_for_generation(self):
-    return pianoroll_rnn_nade_graph.build_graph('generate', self._config)
+    return pianoroll_rnn_nade_graph.get_build_graph_fn(
+        'generate', self._config)()
 
   def _generate_step_for_batch(self, pianoroll_sequences, inputs, initial_state,
                                temperature):
@@ -102,30 +103,24 @@ default_configs = {
             id='rnn-nade',
             description='RNN-NADE'),
         mm.PianorollEncoderDecoder(),
-        magenta.common.HParams(
+        tf.contrib.training.HParams(
             batch_size=64,
             rnn_layer_sizes=[128, 128, 128],
             nade_hidden_units=128,
             dropout_keep_prob=0.5,
-            skip_first_n_losses=10,
             clip_norm=5,
-            initial_learning_rate=0.001,
-            decay_steps=1000,
-            decay_rate=0.95)),
+            learning_rate=0.001)),
     'rnn-nade_attn': events_rnn_model.EventSequenceRnnConfig(
         magenta.protobuf.generator_pb2.GeneratorDetails(
             id='rnn-nade_attn',
             description='RNN-NADE with attention.'),
         mm.PianorollEncoderDecoder(),
-        magenta.common.HParams(
+        tf.contrib.training.HParams(
             batch_size=48,
             rnn_layer_sizes=[128, 128],
             attn_length=32,
             nade_hidden_units=128,
             dropout_keep_prob=0.5,
-            skip_first_n_losses=10,
             clip_norm=5,
-            initial_learning_rate=0.001,
-            decay_steps=1000,
-            decay_rate=0.95)),
+            learning_rate=0.001)),
 }

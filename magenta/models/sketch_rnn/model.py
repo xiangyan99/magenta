@@ -1,16 +1,17 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Sketch-RNN Model."""
 
 from __future__ import absolute_import
@@ -19,26 +20,20 @@ from __future__ import print_function
 
 import random
 
-# internal imports
-
+from magenta.models.sketch_rnn import rnn
 import numpy as np
 import tensorflow as tf
-
-from magenta.common.tf_lib import HParams
-from magenta.models.sketch_rnn import rnn
 
 
 def copy_hparams(hparams):
   """Return a copy of an HParams instance."""
-  new_hparams = HParams()
-  new_hparams.update(hparams.keyvals)
-  return new_hparams
+  return tf.contrib.training.HParams(**hparams.values())
 
 
 def get_default_hparams():
   """Return default HParams for sketch-rnn."""
-  hparams = HParams(
-      data_set='aaron_sheep.npz',  # Our dataset.
+  hparams = tf.contrib.training.HParams(
+      data_set=['aaron_sheep.npz'],  # Our dataset.
       num_steps=10000000,  # Total number of steps of training. Keep large.
       save_every=500,  # Number of batches per checkpoint creation.
       max_seq_len=250,  # Not used. Will be changed by model. [Eliminate?]
@@ -57,13 +52,13 @@ def get_default_hparams():
       decay_rate=0.9999,  # Learning rate decay per minibatch.
       kl_decay_rate=0.99995,  # KL annealing decay rate per minibatch.
       min_learning_rate=0.00001,  # Minimum learning rate.
-      use_recurrent_dropout=True,  # Dropout with memory loss. Recomended
+      use_recurrent_dropout=True,  # Dropout with memory loss. Recommended
       recurrent_dropout_prob=0.90,  # Probability of recurrent dropout keep.
       use_input_dropout=False,  # Input dropout. Recommend leaving False.
       input_dropout_prob=0.90,  # Probability of input dropout keep.
-      use_output_dropout=False,  # Output droput. Recommend leaving False.
+      use_output_dropout=False,  # Output dropout. Recommend leaving False.
       output_dropout_prob=0.90,  # Probability of output dropout keep.
-      random_scale_factor=0.15,  # Random scaling data augmention proportion.
+      random_scale_factor=0.15,  # Random scaling data augmentation proportion.
       augment_stroke_prob=0.10,  # Point dropping augmentation proportion.
       conditional=True,  # When False, use unconditional decoder-only model.
       is_training=True  # Is model training? Recommend keeping true.
@@ -147,23 +142,14 @@ class Model(object):
     else:
       assert False, 'please choose a respectable cell'
 
-    use_recurrent_dropout = False
-    if self.hps.use_recurrent_dropout == 1:
-      use_recurrent_dropout = True
+    use_recurrent_dropout = self.hps.use_recurrent_dropout
+    use_input_dropout = self.hps.use_input_dropout
+    use_output_dropout = self.hps.use_output_dropout
 
-    use_input_dropout = False if self.hps.use_input_dropout == 0 else True
-    use_output_dropout = False if self.hps.use_output_dropout == 0 else True
-
-    if hps.dec_model == 'hyper':
-      cell = cell_fn(
-          hps.dec_rnn_size,
-          use_recurrent_dropout=use_recurrent_dropout,
-          dropout_keep_prob=self.hps.recurrent_dropout_prob)
-    else:
-      cell = cell_fn(
-          hps.dec_rnn_size,
-          use_recurrent_dropout=use_recurrent_dropout,
-          dropout_keep_prob=self.hps.recurrent_dropout_prob)
+    cell = cell_fn(
+        hps.dec_rnn_size,
+        use_recurrent_dropout=use_recurrent_dropout,
+        dropout_keep_prob=self.hps.recurrent_dropout_prob)
 
     if hps.conditional:  # vae mode:
       if hps.enc_model == 'hyper':
@@ -207,8 +193,11 @@ class Model(object):
         dtype=tf.float32,
         shape=[self.hps.batch_size, self.hps.max_seq_len + 1, 5])
 
-    self.input_x = self.input_data[:, :self.hps.max_seq_len, :]
+    # The target/expected vectors of strokes
     self.output_x = self.input_data[:, 1:self.hps.max_seq_len + 1, :]
+    # vectors of strokes to be fed to decoder (same as above, but lagged behind
+    # one step to include initial dummy value of (0, 0, 1, 0, 0))
+    self.input_x = self.input_data[:, :self.hps.max_seq_len, :]
 
     # either do vae-bit and get z, or do unconditional, decoder-only
     if hps.conditional:  # vae mode:
@@ -244,7 +233,9 @@ class Model(object):
     self.num_mixture = hps.num_mixture
 
     # TODO(deck): Better understand this comment.
-    # Number of outputs is end_of_stroke + prob + 2*(mu + sig) + corr
+    # Number of outputs is 3 (one logit per pen state) plus 6 per mixture
+    # component: mean_x, stdev_x, mean_y, stdev_y, correlation_xy, and the
+    # mixture weight/probability (Pi_k)
     n_out = (3 + self.num_mixture * 6)
 
     with tf.variable_scope('RNN'):
@@ -265,11 +256,13 @@ class Model(object):
     output = tf.nn.xw_plus_b(output, output_w, output_b)
     self.final_state = last_state
 
+    # NB: the below are inner functions, not methods of Model
     def tf_2d_normal(x1, x2, mu1, mu2, s1, s2, rho):
-      """Returns result of eq # 24 and 25 of http://arxiv.org/abs/1308.0850."""
+      """Returns result of eq # 24 of http://arxiv.org/abs/1308.0850."""
       norm1 = tf.subtract(x1, mu1)
       norm2 = tf.subtract(x2, mu2)
       s1s2 = tf.multiply(s1, s2)
+      # eq 25
       z = (tf.square(tf.div(norm1, s1)) + tf.square(tf.div(norm2, s2)) -
            2 * tf.div(tf.multiply(rho, tf.multiply(norm1, norm2)), s1s2))
       neg_rho = 1 - tf.square(rho)
@@ -281,17 +274,23 @@ class Model(object):
     def get_lossfunc(z_pi, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr,
                      z_pen_logits, x1_data, x2_data, pen_data):
       """Returns a loss fn based on eq #26 of http://arxiv.org/abs/1308.0850."""
+      # This represents the L_R only (i.e. does not include the KL loss term).
+
       result0 = tf_2d_normal(x1_data, x2_data, z_mu1, z_mu2, z_sigma1, z_sigma2,
                              z_corr)
       epsilon = 1e-6
+      # result1 is the loss wrt pen offset (L_s in equation 9 of
+      # https://arxiv.org/pdf/1704.03477.pdf)
       result1 = tf.multiply(result0, z_pi)
       result1 = tf.reduce_sum(result1, 1, keep_dims=True)
       result1 = -tf.log(result1 + epsilon)  # avoid log(0)
 
       fs = 1.0 - pen_data[:, 2]  # use training data for this
       fs = tf.reshape(fs, [-1, 1])
+      # Zero out loss terms beyond N_s, the last actual stroke
       result1 = tf.multiply(result1, fs)
 
+      # result2: loss wrt pen state, (L_p in equation 9)
       result2 = tf.nn.softmax_cross_entropy_with_logits(
           labels=pen_data, logits=z_pen_logits)
       result2 = tf.reshape(result2, [-1, 1])
@@ -301,7 +300,8 @@ class Model(object):
       result = result1 + result2
       return result
 
-    # below is where we need to do MDN splitting of distribution params
+    # below is where we need to do MDN (Mixture Density Network) splitting of
+    # distribution params
     def get_mixture_coef(output):
       """Returns the tf slices containing mdn dist params."""
       # This uses eqns 18 -> 23 of http://arxiv.org/abs/1308.0850.
@@ -309,7 +309,7 @@ class Model(object):
       z_pen_logits = z[:, 0:3]  # pen states
       z_pi, z_mu1, z_mu2, z_sigma1, z_sigma2, z_corr = tf.split(z[:, 3:], 6, 1)
 
-      # process output z's into MDN paramters
+      # process output z's into MDN parameters
 
       # softmax all the pi's and pen states:
       z_pi = tf.nn.softmax(z_pi)
@@ -332,8 +332,9 @@ class Model(object):
     self.sigma1 = o_sigma1
     self.sigma2 = o_sigma2
     self.corr = o_corr
-    self.pen = o_pen  # state of the pen
-    self.pen_logits = o_pen_logits  # state of the pen
+    self.pen_logits = o_pen_logits
+    # pen state probabilities (result of applying softmax to self.pen_logits)
+    self.pen = o_pen
 
     # reshape target data so that it is compatible with prediction shape
     target = tf.reshape(self.output_x, [-1, 5])
@@ -344,9 +345,6 @@ class Model(object):
                             o_pen_logits, x1_data, x2_data, pen_data)
 
     self.r_cost = tf.reduce_mean(lossfunc)
-
-    if self.hps.is_training:
-      self.cost = self.r_cost + self.kl_cost * self.hps.kl_weight
 
     if self.hps.is_training:
       self.lr = tf.Variable(self.hps.learning_rate, trainable=False)
@@ -408,8 +406,9 @@ def sample(sess, model, seq_len=250, temperature=1.0, greedy_mode=False,
 
   strokes = np.zeros((seq_len, 5), dtype=np.float32)
   mixture_params = []
-  greedy = False
-  temp = 1.0
+
+  greedy = greedy_mode
+  temp = temperature
 
   for i in range(seq_len):
     if not model.hps.conditional:
@@ -432,13 +431,6 @@ def sample(sess, model, seq_len=250, temperature=1.0, greedy_mode=False,
     ], feed)
 
     [o_pi, o_mu1, o_mu2, o_sigma1, o_sigma2, o_corr, o_pen, next_state] = params
-
-    if i < 0:
-      greedy = False
-      temp = 1.0
-    else:
-      greedy = greedy_mode
-      temp = temperature
 
     idx = get_pi_idx(random.random(), o_pi[0], temp, greedy)
 

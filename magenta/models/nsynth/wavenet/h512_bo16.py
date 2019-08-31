@@ -1,24 +1,140 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""A WaveNet-style AutoEncoder Configuration."""
 
-# internal imports
-import tensorflow as tf
+"""A WaveNet-style AutoEncoder Configuration and FastGeneration Config."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 from magenta.models.nsynth import reader
 from magenta.models.nsynth import utils
 from magenta.models.nsynth.wavenet import masked
+from six.moves import range  # pylint: disable=redefined-builtin
+import tensorflow as tf
+
+
+class FastGenerationConfig(object):
+  """Configuration object that helps manage the graph."""
+
+  def __init__(self, batch_size=1):
+    """."""
+    self.batch_size = batch_size
+
+  def build(self, inputs):
+    """Build the graph for this configuration.
+
+    Args:
+      inputs: A dict of inputs. For training, should contain 'wav'.
+
+    Returns:
+      A dict of outputs that includes the 'predictions',
+      'init_ops', the 'push_ops', and the 'quantized_input'.
+    """
+    num_stages = 10
+    num_layers = 30
+    filter_length = 3
+    width = 512
+    skip_width = 256
+    num_z = 16
+
+    # Encode the source with 8-bit Mu-Law.
+    x = inputs['wav']
+    batch_size = self.batch_size
+    x_quantized = utils.mu_law(x)
+    x_scaled = tf.cast(x_quantized, tf.float32) / 128.0
+    x_scaled = tf.expand_dims(x_scaled, 2)
+
+    encoding = tf.placeholder(
+        name='encoding', shape=[batch_size, num_z], dtype=tf.float32)
+    en = tf.expand_dims(encoding, 1)
+
+    init_ops, push_ops = [], []
+
+    ###
+    # The WaveNet Decoder.
+    ###
+    l = x_scaled
+    l, inits, pushs = utils.causal_linear(
+        x=l,
+        n_inputs=1,
+        n_outputs=width,
+        name='startconv',
+        rate=1,
+        batch_size=batch_size,
+        filter_length=filter_length)
+
+    for init in inits:
+      init_ops.append(init)
+    for push in pushs:
+      push_ops.append(push)
+
+    # Set up skip connections.
+    s = utils.linear(l, width, skip_width, name='skip_start')
+
+    # Residual blocks with skip connections.
+    for i in range(num_layers):
+      dilation = 2**(i % num_stages)
+
+      # dilated masked cnn
+      d, inits, pushs = utils.causal_linear(
+          x=l,
+          n_inputs=width,
+          n_outputs=width * 2,
+          name='dilatedconv_%d' % (i + 1),
+          rate=dilation,
+          batch_size=batch_size,
+          filter_length=filter_length)
+
+      for init in inits:
+        init_ops.append(init)
+      for push in pushs:
+        push_ops.append(push)
+
+      # local conditioning
+      d += utils.linear(en, num_z, width * 2, name='cond_map_%d' % (i + 1))
+
+      # gated cnn
+      assert d.get_shape().as_list()[2] % 2 == 0
+      m = d.get_shape().as_list()[2] // 2
+      d = tf.sigmoid(d[:, :, :m]) * tf.tanh(d[:, :, m:])
+
+      # residuals
+      l += utils.linear(d, width, width, name='res_%d' % (i + 1))
+
+      # skips
+      s += utils.linear(d, width, skip_width, name='skip_%d' % (i + 1))
+
+    s = tf.nn.relu(s)
+    s = (utils.linear(s, skip_width, skip_width, name='out1') + utils.linear(
+        en, num_z, skip_width, name='cond_map_out1'))
+    s = tf.nn.relu(s)
+
+    ###
+    # Compute the logits and get the loss.
+    ###
+    logits = utils.linear(s, skip_width, 256, name='logits')
+    logits = tf.reshape(logits, [-1, 256])
+    probs = tf.nn.softmax(logits, name='softmax')
+
+    return {
+        'init_ops': init_ops,
+        'push_ops': push_ops,
+        'predictions': probs,
+        'encoding': encoding,
+        'quantized_input': x_quantized,
+    }
 
 
 class Config(object):
@@ -67,18 +183,18 @@ class Config(object):
     x.set_shape([mb, length, channels])
     return x
 
-  def build(self, inputs, is_training):
+  def build(self, inputs, is_training, rescale_inputs=True):
     """Build the graph for this configuration.
 
     Args:
       inputs: A dict of inputs. For training, should contain 'wav'.
       is_training: Whether we are training or not. Not used in this config.
-
+      rescale_inputs: Whether to convert inputs to mu-law and back to unit
+        scaling before passing through the model (loses gradients).
     Returns:
       A dict of outputs that includes the 'predictions', 'loss', the 'encoding',
       the 'quantized_input', and whatever metrics we want to track for eval.
     """
-    del is_training
     num_stages = 10
     num_layers = 30
     filter_length = 3
@@ -94,18 +210,20 @@ class Config(object):
     x_quantized = utils.mu_law(x)
     x_scaled = tf.cast(x_quantized, tf.float32) / 128.0
     x_scaled = tf.expand_dims(x_scaled, 2)
+    x = tf.expand_dims(x, 2)
 
     ###
     # The Non-Causal Temporal Encoder.
     ###
     en = masked.conv1d(
-        x_scaled,
+        x_scaled if rescale_inputs else x,
         causal=False,
         num_filters=ae_width,
         filter_length=ae_filter_length,
-        name='ae_startconv')
+        name='ae_startconv',
+        is_training=is_training)
 
-    for num_layer in xrange(ae_num_layers):
+    for num_layer in range(ae_num_layers):
       dilation = 2**(num_layer % ae_num_stages)
       d = tf.nn.relu(en)
       d = masked.conv1d(
@@ -114,48 +232,61 @@ class Config(object):
           num_filters=ae_width,
           filter_length=ae_filter_length,
           dilation=dilation,
-          name='ae_dilatedconv_%d' % (num_layer + 1))
+          name='ae_dilatedconv_%d' % (num_layer + 1),
+          is_training=is_training)
       d = tf.nn.relu(d)
       en += masked.conv1d(
           d,
           num_filters=ae_width,
           filter_length=1,
-          name='ae_res_%d' % (num_layer + 1))
+          name='ae_res_%d' % (num_layer + 1),
+          is_training=is_training)
 
     en = masked.conv1d(
         en,
         num_filters=self.ae_bottleneck_width,
         filter_length=1,
-        name='ae_bottleneck')
+        name='ae_bottleneck',
+        is_training=is_training)
     en = masked.pool1d(en, self.ae_hop_length, name='ae_pool', mode='avg')
     encoding = en
 
     ###
     # The WaveNet Decoder.
     ###
-    l = masked.shift_right(x_scaled)
+    l = masked.shift_right(x_scaled if rescale_inputs else x)
     l = masked.conv1d(
-        l, num_filters=width, filter_length=filter_length, name='startconv')
+        l,
+        num_filters=width,
+        filter_length=filter_length,
+        name='startconv',
+        is_training=is_training)
 
     # Set up skip connections.
     s = masked.conv1d(
-        l, num_filters=skip_width, filter_length=1, name='skip_start')
+        l,
+        num_filters=skip_width,
+        filter_length=1,
+        name='skip_start',
+        is_training=is_training)
 
     # Residual blocks with skip connections.
-    for i in xrange(num_layers):
+    for i in range(num_layers):
       dilation = 2**(i % num_stages)
       d = masked.conv1d(
           l,
           num_filters=2 * width,
           filter_length=filter_length,
           dilation=dilation,
-          name='dilatedconv_%d' % (i + 1))
+          name='dilatedconv_%d' % (i + 1),
+          is_training=is_training)
       d = self._condition(d,
                           masked.conv1d(
                               en,
                               num_filters=2 * width,
                               filter_length=1,
-                              name='cond_map_%d' % (i + 1)))
+                              name='cond_map_%d' % (i + 1),
+                              is_training=is_training))
 
       assert d.get_shape().as_list()[2] % 2 == 0
       m = d.get_shape().as_list()[2] // 2
@@ -164,24 +295,43 @@ class Config(object):
       d = d_sigmoid * d_tanh
 
       l += masked.conv1d(
-          d, num_filters=width, filter_length=1, name='res_%d' % (i + 1))
+          d,
+          num_filters=width,
+          filter_length=1,
+          name='res_%d' % (i + 1),
+          is_training=is_training)
       s += masked.conv1d(
-          d, num_filters=skip_width, filter_length=1, name='skip_%d' % (i + 1))
+          d,
+          num_filters=skip_width,
+          filter_length=1,
+          name='skip_%d' % (i + 1),
+          is_training=is_training)
 
     s = tf.nn.relu(s)
-    s = masked.conv1d(s, num_filters=skip_width, filter_length=1, name='out1')
+    s = masked.conv1d(
+        s,
+        num_filters=skip_width,
+        filter_length=1,
+        name='out1',
+        is_training=is_training)
     s = self._condition(s,
                         masked.conv1d(
                             en,
                             num_filters=skip_width,
                             filter_length=1,
-                            name='cond_map_out1'))
+                            name='cond_map_out1',
+                            is_training=is_training))
     s = tf.nn.relu(s)
 
     ###
     # Compute the logits and get the loss.
     ###
-    logits = masked.conv1d(s, num_filters=256, filter_length=1, name='logits')
+    logits = masked.conv1d(
+        s,
+        num_filters=256,
+        filter_length=1,
+        name='logits',
+        is_training=is_training)
     logits = tf.reshape(logits, [-1, 256])
     probs = tf.nn.softmax(logits, name='softmax')
     x_indices = tf.cast(tf.reshape(x_quantized, [-1]), tf.int32) + 128

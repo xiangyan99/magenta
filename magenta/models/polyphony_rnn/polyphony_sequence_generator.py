@@ -1,30 +1,27 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Polyphonic RNN generation code as a SequenceGenerator interface."""
 
 import copy
-from functools import partial
-
-# internal imports
-
-import tensorflow as tf
+import functools
 
 from magenta.models.polyphony_rnn import polyphony_lib
 from magenta.models.polyphony_rnn import polyphony_model
 from magenta.models.polyphony_rnn.polyphony_lib import PolyphonicEvent
-
 import magenta.music as mm
+import tensorflow as tf
 
 
 class PolyphonyRnnSequenceGenerator(mm.BaseSequenceGenerator):
@@ -45,15 +42,16 @@ class PolyphonyRnnSequenceGenerator(mm.BaseSequenceGenerator):
           and metagraph. Mutually exclusive with `checkpoint`.
     """
     super(PolyphonyRnnSequenceGenerator, self).__init__(
-        model, details, steps_per_quarter, checkpoint, bundle)
+        model, details, checkpoint, bundle)
+    self.steps_per_quarter = steps_per_quarter
 
   def _generate(self, input_sequence, generator_options):
     if len(generator_options.input_sections) > 1:
-      raise mm.SequenceGeneratorException(
+      raise mm.SequenceGeneratorError(
           'This model supports at most one input_sections message, but got %s' %
           len(generator_options.input_sections))
     if len(generator_options.generate_sections) != 1:
-      raise mm.SequenceGeneratorException(
+      raise mm.SequenceGeneratorError(
           'This model supports only 1 generate_sections message, but got %s' %
           len(generator_options.generate_sections))
 
@@ -72,15 +70,18 @@ class PolyphonyRnnSequenceGenerator(mm.BaseSequenceGenerator):
       primer_sequence = mm.trim_note_sequence(
           input_sequence, input_section.start_time, input_section.end_time)
       input_start_step = mm.quantize_to_step(
-          input_section.start_time, steps_per_second)
+          input_section.start_time, steps_per_second, quantize_cutoff=0)
     else:
       primer_sequence = input_sequence
       input_start_step = 0
 
-    last_end_time = (max(n.end_time for n in primer_sequence.notes)
-                     if primer_sequence.notes else 0)
+    if primer_sequence.notes:
+      last_end_time = max(n.end_time for n in primer_sequence.notes)
+    else:
+      last_end_time = 0
+
     if last_end_time > generate_section.start_time:
-      raise mm.SequenceGeneratorException(
+      raise mm.SequenceGeneratorError(
           'Got GenerateSection request for section that is before or equal to '
           'the end of the NoteSequence. This model can only extend sequences. '
           'Requested start time: %s, Final note end time: %s' %
@@ -95,7 +96,7 @@ class PolyphonyRnnSequenceGenerator(mm.BaseSequenceGenerator):
     assert len(extracted_seqs) <= 1
 
     generate_start_step = mm.quantize_to_step(
-        generate_section.start_time, steps_per_second)
+        generate_section.start_time, steps_per_second, quantize_cutoff=0)
     # Note that when quantizing end_step, we set quantize_cutoff to 1.0 so it
     # always rounds down. This avoids generating a sequence that ends at 5.0
     # seconds when the requested end time is 4.99.
@@ -144,7 +145,7 @@ class PolyphonyRnnSequenceGenerator(mm.BaseSequenceGenerator):
         # 0 steps because we'll overwrite poly_seq with a blank sequence below.
         inject_start_step = 0
 
-      args['modify_events_callback'] = partial(
+      args['modify_events_callback'] = functools.partial(
           _inject_melody, melody_to_inject, inject_start_step)
 
     # If we don't want to condition on the priming sequence, then overwrite
@@ -223,11 +224,11 @@ def _inject_melody(melody, start_step, encoder_decoder, event_sequences,
 
     # Find the corresponding event in the input melody.
     melody_step_count = start_step
-    for i, event in enumerate(melody):
+    for j, event in enumerate(melody):
       if event.event_type == PolyphonicEvent.STEP_END:
         melody_step_count += 1
       if melody_step_count == event_step_count:
-        melody_pos = i + 1
+        melody_pos = j + 1
         while melody_pos < len(melody) and (
             melody[melody_pos].event_type != PolyphonicEvent.STEP_END):
           event_sequence.append(melody[melody_pos])
@@ -251,5 +252,5 @@ def get_generator_map():
         polyphony_model.PolyphonyRnnModel(config), config.details,
         steps_per_quarter=config.steps_per_quarter, **kwargs)
 
-  return {key: partial(create_sequence_generator, config)
+  return {key: functools.partial(create_sequence_generator, config)
           for (key, config) in polyphony_model.default_configs.items()}

@@ -1,10 +1,10 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -14,15 +14,16 @@
 
 """Helper functions to support the RLTuner and NoteRNNLoader classes."""
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import random
 
-# internal imports
-
 import numpy as np
+from six.moves import range  # pylint: disable=redefined-builtin
 import tensorflow as tf
-
-from magenta.common import tf_lib
 
 LSTM_STATE_NAME = 'lstm'
 
@@ -77,18 +78,18 @@ LEAP_DOUBLED = -1
 
 def default_hparams():
   """Generates the hparams used to train note rnn used in paper."""
-  return tf_lib.HParams(use_dynamic_rnn=True,
-                        batch_size=BATCH_SIZE,
-                        lr=0.0002,
-                        l2_reg=2.5e-5,
-                        clip_norm=5,
-                        initial_learning_rate=0.5,
-                        decay_steps=1000,
-                        decay_rate=0.85,
-                        rnn_layer_sizes=[100],
-                        skip_first_n_losses=32,
-                        one_hot_length=NUM_CLASSES,
-                        exponentially_decay_learning_rate=True)
+  return tf.contrib.training.HParams(use_dynamic_rnn=True,
+                                     batch_size=BATCH_SIZE,
+                                     lr=0.0002,
+                                     l2_reg=2.5e-5,
+                                     clip_norm=5,
+                                     initial_learning_rate=0.5,
+                                     decay_steps=1000,
+                                     decay_rate=0.85,
+                                     rnn_layer_sizes=[100],
+                                     skip_first_n_losses=32,
+                                     one_hot_length=NUM_CLASSES,
+                                     exponentially_decay_learning_rate=True)
 
 
 def basic_rnn_hparams():
@@ -102,20 +103,20 @@ def basic_rnn_hparams():
     Hyperparameters of the downloadable basic_rnn pre-trained model.
   """
   # TODO(natashajaques): ability to restore basic_rnn from any .mag file.
-  return tf_lib.HParams(batch_size=128,
-                        rnn_layer_sizes=[512, 512],
-                        one_hot_length=NUM_CLASSES)
+  return tf.contrib.training.HParams(batch_size=128,
+                                     rnn_layer_sizes=[512, 512],
+                                     one_hot_length=NUM_CLASSES)
 
 
 def default_dqn_hparams():
   """Generates the default hparams for RLTuner DQN model."""
-  return tf_lib.HParams(random_action_probability=0.1,
-                        store_every_nth=1,
-                        train_every_nth=5,
-                        minibatch_size=32,
-                        discount_rate=0.95,
-                        max_experience=100000,
-                        target_network_update_rate=0.01)
+  return tf.contrib.training.HParams(random_action_probability=0.1,
+                                     store_every_nth=1,
+                                     train_every_nth=5,
+                                     minibatch_size=32,
+                                     discount_rate=0.95,
+                                     max_experience=100000,
+                                     target_network_update_rate=0.01)
 
 
 def autocorrelate(signal, lag=1):
@@ -186,7 +187,7 @@ def sample_softmax(softmax_vect):
         return i
       upto += softmax_vect[i]
     tf.logging.warn("Error! sample softmax function shouldn't get here")
-    print "Error! sample softmax function shouldn't get here"
+    print("Error! sample softmax function shouldn't get here")
     return len(softmax_vect) - 1
 
 
@@ -199,8 +200,12 @@ def decoder(event_list, transpose_amount):
   Returns:
     Integer list of MIDI values.
   """
-  return [e - NUM_SPECIAL_EVENTS if e < NUM_SPECIAL_EVENTS else
-          e + INITIAL_MIDI_VALUE - transpose_amount for e in event_list]
+  def _decode_event(e):
+    if e < NUM_SPECIAL_EVENTS:
+      return e - NUM_SPECIAL_EVENTS
+    else:
+      return e + INITIAL_MIDI_VALUE - transpose_amount
+  return [_decode_event(e) for e in event_list]
 
 
 def make_onehot(int_list, one_hot_length):
@@ -217,7 +222,7 @@ def make_onehot(int_list, one_hot_length):
   Returns:
     A list of one-hot encodings of the ints.
   """
-  return [[1.0 if j == i else 0.0 for j in xrange(one_hot_length)]
+  return [[1.0 if j == i else 0.0 for j in range(one_hot_length)]
           for i in int_list]
 
 

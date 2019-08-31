@@ -6,7 +6,11 @@ This model applies language modeling to melody generation using an LSTM.
 
 ### Basic
 
-This configuration acts as a baseline for melody generation with an LSTM model. It uses basic one-hot encoding to represent extracted melodies as input to the LSTM.
+This configuration acts as a baseline for melody generation with an LSTM model. It uses basic one-hot encoding to represent extracted melodies as input to the LSTM. For training, all examples are transposed to the MIDI pitch range \[48, 84\] and outputs will also be in this range.
+
+### Mono
+
+This configuration acts as a baseline for melody generation with an LSTM model. It uses basic one-hot encoding to represent extracted melodies as input to the LSTM. While `basic_rnn` is trained by transposing all inputs to a narrow range, `mono_rnn` is able to use the full 128 MIDI pitches.
 
 ### Lookback
 
@@ -25,12 +29,10 @@ First, set up your [Magenta environment](/README.md). Next, you can either use a
 If you want to get started right away, you can use a model that we've pre-trained on thousands of MIDI files.
 We host .mag bundle files for each of the configurations described above at these links:
 
-* [basic_rnn](http://download.magenta.tensorflow.org/models/basic_rnn.mag).
-* [lookback_rnn](http://download.magenta.tensorflow.org/models/lookback_rnn.mag).
-* [attention_rnn](http://download.magenta.tensorflow.org/models/attention_rnn.mag).
-
-If you're using the Magenta Docker Container, the same .mag files are located in the ```/magenta-models```
-directory.
+* [basic_rnn](http://download.magenta.tensorflow.org/models/basic_rnn.mag)
+* [mono_rnn](http://download.magenta.tensorflow.org/models/mono_rnn.mag)
+* [lookback_rnn](http://download.magenta.tensorflow.org/models/lookback_rnn.mag)
+* [attention_rnn](http://download.magenta.tensorflow.org/models/attention_rnn.mag)
 
 ### Generate a melody
 
@@ -61,7 +63,7 @@ SequenceExamples are fed into the model during training and evaluation. Each Seq
 
 ```
 melody_rnn_create_dataset \
---config=<one of 'basic_rnn', 'lookback_rnn', or 'attention_rnn'> \
+--config=<one of 'basic_rnn', 'mono_rnn', lookback_rnn', or 'attention_rnn'> \
 --input=/tmp/notesequences.tfrecord \
 --output_dir=/tmp/melody_rnn/sequence_examples \
 --eval_ratio=0.10
@@ -76,7 +78,7 @@ melody_rnn_train \
 --config=attention_rnn \
 --run_dir=/tmp/melody_rnn/logdir/run1 \
 --sequence_example_file=/tmp/melody_rnn/sequence_examples/training_melodies.tfrecord \
---hparams="{'batch_size':64,'rnn_layer_sizes':[64,64]}" \
+--hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
 --num_training_steps=20000
 ```
 
@@ -87,7 +89,7 @@ melody_rnn_train \
 --config=attention_rnn \
 --run_dir=/tmp/melody_rnn/logdir/run1 \
 --sequence_example_file=/tmp/melody_rnn/sequence_examples/eval_melodies.tfrecord \
---hparams="{'batch_size':64,'rnn_layer_sizes':[64,64]}" \
+--hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
 --num_training_steps=20000 \
 --eval
 ```
@@ -120,7 +122,7 @@ melody_rnn_generate \
 --output_dir=/tmp/melody_rnn/generated \
 --num_outputs=10 \
 --num_steps=128 \
---hparams="{'batch_size':64,'rnn_layer_sizes':[64,64]}" \
+--hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
 --primer_melody="[60]"
 ```
 
@@ -137,9 +139,9 @@ support a ```--save_generator_bundle``` flag that calls this method. Example:
 
 ```sh
 melody_rnn_generate \
-  --config=attention_rnn \
-  --run_dir=/tmp/melody_rnn/logdir/run1 \
-  --hparams="{'batch_size':64,'rnn_layer_sizes':[64,64]}" \
-  --bundle_file=/tmp/attention_rnn.mag \
-  --save_generator_bundle
+--config=attention_rnn \
+--run_dir=/tmp/melody_rnn/logdir/run1 \
+--hparams="batch_size=64,rnn_layer_sizes=[64,64]" \
+--bundle_file=/tmp/attention_rnn.mag \
+--save_generator_bundle
 ```

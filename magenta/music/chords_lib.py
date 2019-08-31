@@ -1,16 +1,17 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Utility functions for working with chord progressions.
 
 Use extract_chords_for_melodies to extract chord progressions from a
@@ -20,18 +21,18 @@ Use ChordProgression.to_sequence to write a chord progression to a
 NoteSequence proto, encoding the chords as text annotations.
 """
 
-import abc
-import copy
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
-from six.moves import range  # pylint: disable=redefined-builtin
+import abc
 
 from magenta.music import chord_symbols_lib
 from magenta.music import constants
 from magenta.music import events_lib
 from magenta.music import sequences_lib
-from magenta.pipelines import statistics
 from magenta.protobuf import music_pb2
-
+from six.moves import range  # pylint: disable=redefined-builtin
 
 STANDARD_PPQ = constants.STANDARD_PPQ
 NOTES_PER_OCTAVE = constants.NOTES_PER_OCTAVE
@@ -41,11 +42,11 @@ NO_CHORD = constants.NO_CHORD
 CHORD_SYMBOL = music_pb2.NoteSequence.TextAnnotation.CHORD_SYMBOL
 
 
-class CoincidentChordsException(Exception):
+class CoincidentChordsError(Exception):
   pass
 
 
-class BadChordException(Exception):
+class BadChordError(Exception):
   pass
 
 
@@ -100,10 +101,10 @@ class ChordProgression(events_lib.SimpleEventSequence):
           `start_step`.
 
     Raises:
-      BadChordException: If `start_step` does not precede `end_step`.
+      BadChordError: If `start_step` does not precede `end_step`.
     """
     if start_step >= end_step:
-      raise BadChordException(
+      raise BadChordError(
           'Start step does not precede end step: start=%d, end=%d' %
           (start_step, end_step))
 
@@ -127,18 +128,18 @@ class ChordProgression(events_lib.SimpleEventSequence):
       end_step: Stop populating chords at this time step.
 
     Raises:
-      NonIntegerStepsPerBarException: If `quantized_sequence`'s bar length
+      NonIntegerStepsPerBarError: If `quantized_sequence`'s bar length
           (derived from its time signature) is not an integer number of time
           steps.
-      CoincidentChordsException: If any of the chords start on the same step.
+      CoincidentChordsError: If any of the chords start on the same step.
     """
-    sequences_lib.assert_is_quantized_sequence(quantized_sequence)
+    sequences_lib.assert_is_relative_quantized_sequence(quantized_sequence)
     self._reset()
 
     steps_per_bar_float = sequences_lib.steps_per_bar_in_quantized_sequence(
         quantized_sequence)
     if steps_per_bar_float % 1 != 0:
-      raise events_lib.NonIntegerStepsPerBarException(
+      raise events_lib.NonIntegerStepsPerBarError(
           'There are %f timesteps per bar. Time signature: %d/%d' %
           (steps_per_bar_float, quantized_sequence.time_signature.numerator,
            quantized_sequence.time_signature.denominator))
@@ -172,21 +173,27 @@ class ChordProgression(events_lib.SimpleEventSequence):
         else:
           # Two different chords start at the same time step.
           self._reset()
-          raise CoincidentChordsException('chords %s and %s are coincident' %
-                                          (prev_figure, chord.text))
+          raise CoincidentChordsError(
+              'chords %s and %s are coincident' % (prev_figure, chord.text))
 
       if chord.quantized_step > start_step:
         # Add the previous chord.
-        start_index = max(prev_step, start_step) - start_step
+        if prev_step is None:
+          start_index = 0
+        else:
+          start_index = max(prev_step, start_step) - start_step
         end_index = chord.quantized_step - start_step
         self._add_chord(prev_figure, start_index, end_index)
 
       prev_step = chord.quantized_step
       prev_figure = chord.text
 
-    if prev_step < end_step:
+    if prev_step is None or prev_step < end_step:
       # Add the last chord active before end_step.
-      start_index = max(prev_step, start_step) - start_step
+      if prev_step is None:
+        start_index = 0
+      else:
+        start_index = max(prev_step, start_step) - start_step
       end_index = end_step - start_step
       self._add_chord(prev_figure, start_index, end_index)
 
@@ -235,89 +242,75 @@ class ChordProgression(events_lib.SimpleEventSequence):
           transpose down.
 
     Raises:
-      ChordSymbolException: If a chord (other than "no chord") fails to be
+      ChordSymbolError: If a chord (other than "no chord") fails to be
           interpreted by the `chord_symbols_lib` module.
     """
-    for i in xrange(len(self._events)):
+    for i in range(len(self._events)):
       if self._events[i] != NO_CHORD:
         self._events[i] = chord_symbols_lib.transpose_chord_symbol(
             self._events[i], transpose_amount % NOTES_PER_OCTAVE)
 
 
-def extract_chords(quantized_sequence, max_steps=None,
-                   all_transpositions=False):
-  """Extracts a single chord progression from a quantized NoteSequence.
-
-  This function will extract the underlying chord progression (encoded as text
-  annotations) from `quantized_sequence`.
+def event_list_chords(quantized_sequence, event_lists):
+  """Extract corresponding chords for multiple EventSequences.
 
   Args:
-    quantized_sequence: A quantized NoteSequence.
-    max_steps: An integer, maximum length of a chord progression. Chord
-        progressions will be trimmed to this length. If None, chord
-        progressions will not be trimmed.
-    all_transpositions: If True, also transpose the chord progression into all
-        12 keys.
+    quantized_sequence: The underlying quantized NoteSequence from which to
+        extract the chords. It is assumed that the step numbering in this
+        sequence matches the step numbering in each EventSequence in
+        `event_lists`.
+    event_lists: A list of EventSequence objects.
 
   Returns:
-    chord_progressions: If `all_transpositions` is False, a python list
-        containing a single ChordProgression instance. If `all_transpositions`
-        is True, a python list containing 12 ChordProgression instances, one
-        for each transposition.
-    stats: A dictionary mapping string names to `statistics.Statistic` objects.
+    A nested list of chord the same length as `event_lists`, where each list is
+    the same length as the corresponding EventSequence (in events, not steps).
   """
-  sequences_lib.assert_is_quantized_sequence(quantized_sequence)
+  sequences_lib.assert_is_relative_quantized_sequence(quantized_sequence)
 
-  stats = dict([('chords_truncated', statistics.Counter('chords_truncated'))])
   chords = ChordProgression()
-  chords.from_quantized_sequence(
-      quantized_sequence, 0, quantized_sequence.total_quantized_steps)
-  if max_steps is not None:
-    if len(chords) > max_steps:
-      chords.set_length(max_steps)
-      stats['chords_truncated'].increment()
-  if all_transpositions:
-    chord_progressions = []
-    for amount in range(-6, 6):
-      transposed_chords = copy.deepcopy(chords)
-      transposed_chords.transpose(amount)
-      chord_progressions.append(transposed_chords)
-    return chord_progressions, stats.values()
-  else:
-    return [chords], stats.values()
+  if quantized_sequence.total_quantized_steps > 0:
+    chords.from_quantized_sequence(
+        quantized_sequence, 0, quantized_sequence.total_quantized_steps)
+
+  pad_chord = chords[-1] if chords else NO_CHORD
+
+  chord_lists = []
+  for e in event_lists:
+    chord_lists.append([chords[step] if step < len(chords) else pad_chord
+                        for step in e.steps])
+
+  return chord_lists
 
 
-def extract_chords_for_melodies(quantized_sequence, melodies):
-  """Extracts a chord progression from the quantized NoteSequence for melodies.
-
-  This function will extract the underlying chord progression (encoded as text
-  annotations) from `quantized_sequence` for each monophonic melody in
-  `melodies`.  Each chord progression will be the same length as its
-  corresponding melody.
+def add_chords_to_sequence(note_sequence, chords, chord_times):
+  """Add chords to a NoteSequence at specified times.
 
   Args:
-    quantized_sequence: A quantized NoteSequence object.
-    melodies: A python list of Melody instances.
+    note_sequence: The NoteSequence proto to which chords will be added (in
+        place). Should not already have chords.
+    chords: A Python list of chord figure strings to add to `note_sequence` as
+        text annotations.
+    chord_times: A Python list containing the time in seconds at which to add
+        each chord. Should be the same length as `chords` and nondecreasing.
 
-  Returns:
-    chord_progressions: A python list of ChordProgression instances, the same
-        length as `melodies`. If a progression fails to be extracted for a
-        melody, the corresponding list entry will be None.
-    stats: A dictionary mapping string names to `statistics.Statistic` objects.
+  Raises:
+    ValueError: If `note_sequence` already has chords, or if `chord_times` is
+        not sorted in ascending order.
   """
-  chord_progressions = []
-  stats = dict([('coincident_chords', statistics.Counter('coincident_chords'))])
-  for melody in melodies:
-    try:
-      chords = ChordProgression()
-      chords.from_quantized_sequence(
-          quantized_sequence, melody.start_step, melody.end_step)
-    except CoincidentChordsException:
-      stats['coincident_chords'].increment()
-      chords = None
-    chord_progressions.append(chords)
+  if any(ta.annotation_type == CHORD_SYMBOL
+         for ta in note_sequence.text_annotations):
+    raise ValueError('NoteSequence already has chords.')
+  if any(t1 > t2 for t1, t2 in zip(chord_times[:-1], chord_times[1:])):
+    raise ValueError('Chord times not sorted in ascending order.')
 
-  return chord_progressions, stats.values()
+  current_chord = None
+  for chord, time in zip(chords, chord_times):
+    if chord != current_chord:
+      current_chord = chord
+      ta = note_sequence.text_annotations.add()
+      ta.annotation_type = CHORD_SYMBOL
+      ta.time = time
+      ta.text = chord
 
 
 class ChordRenderer(object):
@@ -364,6 +357,7 @@ class BasicChordRenderer(ChordRenderer):
     self._bass_octave = bass_octave
 
   def _render_notes(self, sequence, pitches, bass_pitch, start_time, end_time):
+    """Renders notes."""
     all_pitches = []
     for pitch in pitches:
       all_pitches.append(12 * self._octave + pitch % 12)

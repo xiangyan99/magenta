@@ -1,28 +1,30 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Tests for pipeline."""
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import os
 import tempfile
 
-# internal imports
-import tensorflow as tf
-
 from magenta.common import testing_lib
 from magenta.pipelines import pipeline
 from magenta.pipelines import statistics
-
+import tensorflow as tf
 
 MockStringProto = testing_lib.MockStringProto  # pylint: disable=invalid-name
 
@@ -47,51 +49,51 @@ class PipelineTest(tf.test.TestCase):
 
   def testFileIteratorRecursive(self):
     target_files = [
-        ('0.ext', 'hello world'),
-        ('a/1.ext', '123456'),
-        ('a/2.ext', 'abcd'),
-        ('b/c/3.ext', '9999'),
-        ('b/z/3.ext', 'qwerty'),
-        ('d/4.ext', 'mary had a little lamb'),
-        ('d/e/5.ext', 'zzzzzzzz'),
-        ('d/e/f/g/6.ext', 'yyyyyyyyyyy')]
+        ('0.ext', b'hello world'),
+        ('a/1.ext', b'123456'),
+        ('a/2.ext', b'abcd'),
+        ('b/c/3.ext', b'9999'),
+        ('b/z/3.ext', b'qwerty'),
+        ('d/4.ext', b'mary had a little lamb'),
+        ('d/e/5.ext', b'zzzzzzzz'),
+        ('d/e/f/g/6.ext', b'yyyyyyyyyyy')]
     extra_files = [
-        ('stuff.txt', 'some stuff'),
-        ('a/q/r/file', 'more stuff')]
+        ('stuff.txt', b'some stuff'),
+        ('a/q/r/file', b'more stuff')]
 
     root_dir = tempfile.mkdtemp(dir=self.get_temp_dir())
     for path, contents in target_files + extra_files:
       abs_path = os.path.join(root_dir, path)
       tf.gfile.MakeDirs(os.path.dirname(abs_path))
-      tf.gfile.FastGFile(abs_path, mode='w').write(contents)
+      tf.gfile.GFile(abs_path, mode='w').write(contents)
 
     file_iterator = pipeline.file_iterator(root_dir, 'ext', recurse=True)
 
-    self.assertEqual(set([contents for _, contents in target_files]),
+    self.assertEqual(set(contents for _, contents in target_files),
                      set(file_iterator))
 
   def testFileIteratorNotRecursive(self):
     target_files = [
-        ('0.ext', 'hello world'),
-        ('1.ext', 'hi')]
+        ('0.ext', b'hello world'),
+        ('1.ext', b'hi')]
     extra_files = [
-        ('a/1.ext', '123456'),
-        ('a/2.ext', 'abcd'),
-        ('b/c/3.ext', '9999'),
-        ('d/e/5.ext', 'zzzzzzzz'),
-        ('d/e/f/g/6.ext', 'yyyyyyyyyyy'),
-        ('stuff.txt', 'some stuff'),
-        ('a/q/r/file', 'more stuff')]
+        ('a/1.ext', b'123456'),
+        ('a/2.ext', b'abcd'),
+        ('b/c/3.ext', b'9999'),
+        ('d/e/5.ext', b'zzzzzzzz'),
+        ('d/e/f/g/6.ext', b'yyyyyyyyyyy'),
+        ('stuff.txt', b'some stuff'),
+        ('a/q/r/file', b'more stuff')]
 
     root_dir = tempfile.mkdtemp(dir=self.get_temp_dir())
     for path, contents in target_files + extra_files:
       abs_path = os.path.join(root_dir, path)
       tf.gfile.MakeDirs(os.path.dirname(abs_path))
-      tf.gfile.FastGFile(abs_path, mode='w').write(contents)
+      tf.gfile.GFile(abs_path, mode='w').write(contents)
 
     file_iterator = pipeline.file_iterator(root_dir, 'ext', recurse=False)
 
-    self.assertEqual(set([contents for _, contents in target_files]),
+    self.assertEqual(set(contents for _, contents in target_files),
                      set(file_iterator))
 
   def testTFRecordIterator(self):
@@ -100,7 +102,7 @@ class PipelineTest(tf.test.TestCase):
         '../testdata/tfrecord_iterator_test.tfrecord')
     self.assertEqual(
         [MockStringProto(string)
-         for string in ['hello world', '12345', 'success']],
+         for string in [b'hello world', b'12345', b'success']],
         list(pipeline.tf_record_iterator(tfrecord_file, MockStringProto)))
 
   def testRunPipelineSerial(self):
@@ -116,13 +118,13 @@ class PipelineTest(tf.test.TestCase):
 
     dataset_1_reader = tf.python_io.tf_record_iterator(dataset_1_dir)
     self.assertEqual(
-        set(['serialized:%s_A' % s for s in strings] +
-            ['serialized:%s_B' % s for s in strings]),
+        set([('serialized:%s_A' % s).encode('utf-8') for s in strings] +
+            [('serialized:%s_B' % s).encode('utf-8') for s in strings]),
         set(dataset_1_reader))
 
     dataset_2_reader = tf.python_io.tf_record_iterator(dataset_2_dir)
     self.assertEqual(
-        set(['serialized:%s_C' % s for s in strings]),
+        set(('serialized:%s_C' % s).encode('utf-8') for s in strings),
         set(dataset_2_reader))
 
   def testPipelineIterator(self):
@@ -134,7 +136,7 @@ class PipelineTest(tf.test.TestCase):
             [MockStringProto(s + '_B') for s in strings]),
         set(result['dataset_1']))
     self.assertEqual(
-        set([MockStringProto(s + '_C') for s in strings]),
+        set(MockStringProto(s + '_C') for s in strings),
         set(result['dataset_2']))
 
   def testPipelineKey(self):
@@ -164,12 +166,9 @@ class PipelineTest(tf.test.TestCase):
     with self.assertRaises(ValueError):
       _ = pipeline.PipelineKey(1234, 'abc')
 
-  def testInvalidTypeSignatureException(self):
+  def testInvalidTypeSignatureError(self):
 
     class PipelineShell(pipeline.Pipeline):
-
-      def __init__(self, input_type, output_type):
-        super(PipelineShell, self).__init__(input_type, output_type)
 
       def transform(self, input_object):
         pass
@@ -180,9 +179,9 @@ class PipelineTest(tf.test.TestCase):
     good_type = str
     for bad_type in [123, {1: str}, {'name': 123},
                      {'name': str, 'name2': 123}, [str, int]]:
-      with self.assertRaises(pipeline.InvalidTypeSignatureException):
+      with self.assertRaises(pipeline.InvalidTypeSignatureError):
         PipelineShell(bad_type, good_type)
-      with self.assertRaises(pipeline.InvalidTypeSignatureException):
+      with self.assertRaises(pipeline.InvalidTypeSignatureError):
         PipelineShell(good_type, bad_type)
 
   def testPipelineGivenName(self):
@@ -203,7 +202,7 @@ class PipelineTest(tf.test.TestCase):
     pipe.transform('hello')
     stats = pipe.get_stats()
     self.assertEqual(
-        set([(stat.name, stat.count) for stat in stats]),
+        set((stat.name, stat.count) for stat in stats),
         set([('TestName_counter_1', 5), ('TestName_counter_2', 10)]))
 
   def testPipelineDefaultName(self):
@@ -224,11 +223,11 @@ class PipelineTest(tf.test.TestCase):
     pipe.transform('hello')
     stats = pipe.get_stats()
     self.assertEqual(
-        set([(stat.name, stat.count) for stat in stats]),
+        set((stat.name, stat.count) for stat in stats),
         set([('TestPipeline123_counter_1', 5),
              ('TestPipeline123_counter_2', 10)]))
 
-  def testInvalidStatisticsException(self):
+  def testInvalidStatisticsError(self):
 
     class TestPipeline1(pipeline.Pipeline):
 
@@ -251,11 +250,11 @@ class PipelineTest(tf.test.TestCase):
         return [input_object]
 
     tp1 = TestPipeline1()
-    with self.assertRaises(pipeline.InvalidStatisticsException):
+    with self.assertRaises(pipeline.InvalidStatisticsError):
       tp1.transform('hello')
 
     tp2 = TestPipeline2()
-    with self.assertRaises(pipeline.InvalidStatisticsException):
+    with self.assertRaises(pipeline.InvalidStatisticsError):
       tp2.transform('hello')
 
 

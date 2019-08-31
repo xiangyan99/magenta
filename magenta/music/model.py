@@ -1,24 +1,23 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Abstract class for models.
 
 Provides a uniform interface for interacting with any model.
 """
 
 import abc
-
-# internal imports
 
 import tensorflow as tf
 
@@ -37,12 +36,9 @@ class BaseModel(object):
 
   @abc.abstractmethod
   def _build_graph_for_generation(self):
-    """Builds and returns the model graph for generation.
+    """Builds the model graph for generation.
 
     Will be called before restoring a checkpoint file.
-
-    Returns:
-      The tf.Graph object.
     """
     pass
 
@@ -55,8 +51,8 @@ class BaseModel(object):
     Args:
       checkpoint_file: The path to the checkpoint file that should be used.
     """
-    graph = self._build_graph_for_generation()
-    with graph.as_default():
+    with tf.Graph().as_default():
+      self._build_graph_for_generation()
       saver = tf.train.Saver()
       self._session = tf.Session()
       tf.logging.info('Checkpoint used: %s', checkpoint_file)

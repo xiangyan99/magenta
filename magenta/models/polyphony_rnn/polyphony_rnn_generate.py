@@ -1,16 +1,17 @@
-# Copyright 2016 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """Generate polyphonic tracks from a trained checkpoint.
 
 Uses flags to define operation.
@@ -20,17 +21,13 @@ import ast
 import os
 import time
 
-# internal imports
-
-import tensorflow as tf
 import magenta
-
 from magenta.models.polyphony_rnn import polyphony_model
 from magenta.models.polyphony_rnn import polyphony_sequence_generator
-
 from magenta.music import constants
 from magenta.protobuf import generator_pb2
 from magenta.protobuf import music_pb2
+import tensorflow as tf
 
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string(
@@ -109,16 +106,16 @@ tf.app.flags.DEFINE_string(
     'The threshold for what messages will be logged DEBUG, INFO, WARN, ERROR, '
     'or FATAL.')
 tf.app.flags.DEFINE_string(
-    'hparams', '{}',
-    'String representation of a Python dictionary containing hyperparameter '
-    'to value mapping. This mapping is merged with the default '
-    'hyperparameters.')
+    'hparams', '',
+    'Comma-separated list of `name=value` pairs. For each pair, the value of '
+    'the hyperparameter named `name` is set to `value`. This mapping is merged '
+    'with the default hyperparameters.')
 
 
 def get_checkpoint():
   """Get the training dir or checkpoint path to be used by the model."""
   if FLAGS.run_dir and FLAGS.bundle_file and not FLAGS.save_generator_bundle:
-    raise magenta.music.SequenceGeneratorException(
+    raise magenta.music.SequenceGeneratorError(
         'Cannot specify both bundle_file and run_dir')
   if FLAGS.run_dir:
     train_dir = os.path.join(os.path.expanduser(FLAGS.run_dir), 'train')
@@ -243,15 +240,21 @@ def main(unused_argv):
   """Saves bundle or runs generator based on flags."""
   tf.logging.set_verbosity(FLAGS.log)
 
-  config = polyphony_model.default_configs[FLAGS.config]
+  bundle = get_bundle()
+
+  config_id = bundle.generator_details.id if bundle else FLAGS.config
+  config = polyphony_model.default_configs[config_id]
   config.hparams.parse(FLAGS.hparams)
+  # Having too large of a batch size will slow generation down unnecessarily.
+  config.hparams.batch_size = min(
+      config.hparams.batch_size, FLAGS.beam_size * FLAGS.branch_factor)
 
   generator = polyphony_sequence_generator.PolyphonyRnnSequenceGenerator(
       model=polyphony_model.PolyphonyRnnModel(config),
       details=config.details,
       steps_per_quarter=config.steps_per_quarter,
       checkpoint=get_checkpoint(),
-      bundle=get_bundle())
+      bundle=bundle)
 
   if FLAGS.save_generator_bundle:
     bundle_filename = os.path.expanduser(FLAGS.bundle_file)

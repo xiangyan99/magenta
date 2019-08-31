@@ -1,19 +1,23 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """SketchRNN RNN definition."""
 
-# internal imports
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import numpy as np
 import tensorflow as tf
 
@@ -41,7 +45,7 @@ def lstm_ortho_initializer(scale=1.0):
   def _initializer(shape, dtype=tf.float32,
                    partition_info=None):  # pylint: disable=unused-argument
     size_x = shape[0]
-    size_h = shape[1] / 4  # assumes lstm.
+    size_h = shape[1] // 4  # assumes lstm.
     t = np.zeros(shape)
     t[:, :size_h] = orthogonal([size_x, size_h]) * scale
     t[:, size_h:size_h * 2] = orthogonal([size_x, size_h]) * scale
@@ -165,7 +169,7 @@ def layer_norm(x,
   var = tf.reduce_mean(tf.square(x_shifted), axes, keep_dims=True)
   inv_std = tf.rsqrt(var + epsilon)
   with tf.variable_scope(scope):
-    if reuse is True:
+    if reuse:
       tf.get_variable_scope().reuse_variables()
     gamma = tf.get_variable(
         'ln_gamma', [num_units],
@@ -200,7 +204,7 @@ def super_linear(x,
   """Performs linear operation. Uses ortho init defined earlier."""
   shape = x.get_shape().as_list()
   with tf.variable_scope(scope or 'linear'):
-    if reuse is True:
+    if reuse:
       tf.get_variable_scope().reuse_variables()
 
     w_init = None  # uniform

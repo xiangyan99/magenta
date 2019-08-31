@@ -1,19 +1,23 @@
-# Copyright 2017 Google Inc. All Rights Reserved.
+# Copyright 2019 The Magenta Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
-#    http://www.apache.org/licenses/LICENSE-2.0
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """A library of functions that help with causal masking."""
 
-# internal imports
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import tensorflow as tf
 
 
@@ -69,11 +73,11 @@ def time_to_batch(x, block_size):
   """
   shape = x.get_shape().as_list()
   y = tf.reshape(x, [
-      shape[0], shape[1] / block_size, block_size, shape[2]
+      shape[0], shape[1] // block_size, block_size, shape[2]
   ])
   y = tf.transpose(y, [0, 2, 1, 3])
   y = tf.reshape(y, [
-      shape[0] * block_size, shape[1] / block_size, shape[2]
+      shape[0] * block_size, shape[1] // block_size, shape[2]
   ])
   y.set_shape([
       mul_or_none(shape[0], block_size), mul_or_none(shape[1], 1. / block_size),
@@ -94,9 +98,9 @@ def batch_to_time(x, block_size):
     Tensor of shape [nb, k*block_size, n].
   """
   shape = x.get_shape().as_list()
-  y = tf.reshape(x, [shape[0] / block_size, block_size, shape[1], shape[2]])
+  y = tf.reshape(x, [shape[0] // block_size, block_size, shape[1], shape[2]])
   y = tf.transpose(y, [0, 2, 1, 3])
-  y = tf.reshape(y, [shape[0] / block_size, shape[1] * block_size, shape[2]])
+  y = tf.reshape(y, [shape[0] // block_size, shape[1] * block_size, shape[2]])
   y.set_shape([mul_or_none(shape[0], 1. / block_size),
                mul_or_none(shape[1], block_size),
                shape[2]])
@@ -110,7 +114,8 @@ def conv1d(x,
            dilation=1,
            causal=True,
            kernel_initializer=tf.uniform_unit_scaling_initializer(1.0),
-           biases_initializer=tf.constant_initializer(0.0)):
+           biases_initializer=tf.constant_initializer(0.0),
+           is_training=True):
   """Fast 1D convolution that supports causal padding and dilation.
 
   Args:
@@ -122,6 +127,7 @@ def conv1d(x,
     causal: Whether or not this is a causal convolution.
     kernel_initializer: The kernel initialization function.
     biases_initializer: The biases initialization function.
+    is_training: Whether or not ot use traininable variables.
 
   Returns:
     y: The output of the 1D convolution.
@@ -136,9 +142,11 @@ def conv1d(x,
 
   with tf.variable_scope(name):
     weights = tf.get_variable(
-        'W', shape=kernel_shape, initializer=kernel_initializer)
+        'W', shape=kernel_shape, initializer=kernel_initializer,
+        trainable=is_training)
     biases = tf.get_variable(
-        'biases', shape=biases_shape, initializer=biases_initializer)
+        'biases', shape=biases_shape, initializer=biases_initializer,
+        trainable=is_training)
 
   x_ttb = time_to_batch(x, dilation)
   if filter_length > 1 and causal:
